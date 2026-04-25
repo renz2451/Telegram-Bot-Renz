@@ -1,15 +1,28 @@
 import requests
+import os
+import sys
+import logging
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, MessageHandler, filters, CommandHandler, CallbackQueryHandler
-import json
 from typing import Dict, Optional
+
+# ============================================
+# 🔥 LOGGING SETUP (For debugging on server)
+# ============================================
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
 # ============================================
 # 🔥 FIREBASE CONFIGURATION
 # ============================================
 FIREBASE_DB_URL = "https://renz-24e39-default-rtdb.firebaseio.com"
-BOT_TOKEN = "8623671987:AAGe-7ik49SvtU-M6ZIw1B1IW61ikB1I0EU"
+
+# Get token from environment variable (SECURE!)
+BOT_TOKEN = os.environ.get('BOT_TOKEN', '8623671987:AAGe-7ik49SvtU-M6ZIw1B1IW61ikB1I0EU')
 YOUR_CHAT_ID = 6064653643
 
 # Store user sessions and forwarded messages mapping
@@ -25,7 +38,7 @@ def save_to_firebase(path: str, data: dict) -> bool:
         response = requests.post(url, json=data)
         return response.ok
     except Exception as e:
-        print(f"❌ Firebase save error: {e}")
+        logger.error(f"Firebase save error: {e}")
         return False
 
 def update_firebase(path: str, data: dict) -> bool:
@@ -34,7 +47,7 @@ def update_firebase(path: str, data: dict) -> bool:
         response = requests.patch(url, json=data)
         return response.ok
     except Exception as e:
-        print(f"❌ Firebase update error: {e}")
+        logger.error(f"Firebase update error: {e}")
         return False
 
 def get_from_firebase(path: str) -> Optional[dict]:
@@ -45,7 +58,7 @@ def get_from_firebase(path: str) -> Optional[dict]:
             return response.json()
         return None
     except Exception as e:
-        print(f"❌ Firebase read error: {e}")
+        logger.error(f"Firebase read error: {e}")
         return None
 
 # ============================================
@@ -71,11 +84,10 @@ async def main_menu(update: Update, context):
         ],
         [
             InlineKeyboardButton("💬 QUICK REPLY", callback_data="quick_reply"),
-            InlineKeyboardButton("⚙️ SETTINGS", callback_data="settings")
+            InlineKeyboardButton("📨 INBOX", callback_data="inbox")
         ],
         [
-            InlineKeyboardButton("📨 INBOX", callback_data="inbox"),
-            InlineKeyboardButton("📊 STATS", callback_data="stats")
+            InlineKeyboardButton("🔙 EXIT", callback_data="exit")
         ]
     ]
     
@@ -128,7 +140,6 @@ async def dashboard_menu(update: Update, context):
 ║  ✅ Bot: Running 24/7
 ║  🔥 Firebase: Connected
 ║  ⚡ Response: <1s
-║  📡 Uptime: 100%
 ╚════════════════════════════════╝
 """
     
@@ -149,7 +160,6 @@ async def users_menu(update: Update, context):
         await query.edit_message_text("📭 **No users yet**\n\nBe the first to message the bot!", parse_mode='Markdown')
         return
     
-    # Create user buttons
     keyboard = []
     for user_id, data in list(users_data.items())[:10]:
         if isinstance(data, dict):
@@ -182,7 +192,6 @@ async def user_details_menu(update: Update, context):
         await query.edit_message_text("❌ User not found")
         return
     
-    # Get recent messages
     messages = get_from_firebase(f"messages/{user_id}")
     recent_msgs = ""
     if messages:
@@ -208,45 +217,11 @@ async def user_details_menu(update: Update, context):
     keyboard = [
         [
             InlineKeyboardButton("💬 QUICK REPLY", callback_data=f"reply_{user_id}"),
-            InlineKeyboardButton("📜 FULL HISTORY", callback_data=f"history_{user_id}")
-        ],
-        [
-            InlineKeyboardButton("🚫 BLOCK USER", callback_data=f"block_{user_id}"),
             InlineKeyboardButton("🔙 BACK", callback_data="users_list")
         ]
     ]
     
     await query.edit_message_text(details, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
-
-async def quick_reply_menu(update: Update, context):
-    """Quick reply interface"""
-    query = update.callback_query
-    await query.answer()
-    
-    context.user_data['quick_reply_mode'] = True
-    
-    await query.edit_message_text(
-        "✏️ **QUICK REPLY MODE**\n\n"
-        "Send me a USER ID to reply to:\n\n"
-        "Example: `5682792112`\n\n"
-        "Or tap a user below:",
-        parse_mode='Markdown'
-    )
-    
-    # Show recent users
-    users_data = get_from_firebase("users")
-    if users_data:
-        keyboard = []
-        for user_id, data in list(users_data.items())[:5]:
-            if isinstance(data, dict):
-                keyboard.append([
-                    InlineKeyboardButton(
-                        f"👤 {data.get('name')}",
-                        callback_data=f"quick_{user_id}"
-                    )
-                ])
-        keyboard.append([InlineKeyboardButton("🔙 BACK", callback_data="main_menu")])
-        await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def broadcast_menu(update: Update, context):
     """Broadcast menu"""
@@ -255,17 +230,12 @@ async def broadcast_menu(update: Update, context):
     
     keyboard = [
         [InlineKeyboardButton("📝 TEXT BROADCAST", callback_data="broadcast_text")],
-        [InlineKeyboardButton("🖼️ MEDIA BROADCAST", callback_data="broadcast_media")],
-        [InlineKeyboardButton("🎯 TARGETED BROADCAST", callback_data="broadcast_targeted")],
         [InlineKeyboardButton("🔙 BACK", callback_data="main_menu")]
     ]
     
     await query.edit_message_text(
         "📢 **BROADCAST CENTER**\n\n"
-        "Select broadcast type:\n\n"
-        "• **Text** - Send message to all\n"
-        "• **Media** - Send photos/videos\n"
-        "• **Targeted** - Send to specific users",
+        "Send /broadcast command to start broadcasting!",
         parse_mode='Markdown',
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
@@ -281,27 +251,12 @@ async def analytics_menu(update: Update, context):
     total_users = len(users_data) if users_data else 0
     total_messages = 0
     
-    # Calculate average messages per user
     if messages_data:
         for msgs in messages_data.values():
             if isinstance(msgs, dict):
                 total_messages += len(msgs)
     
     avg_msgs = round(total_messages / total_users, 2) if total_users > 0 else 0
-    
-    # Count active today
-    active_today = 0
-    today = datetime.now().date()
-    for data in (users_data or {}).values():
-        if isinstance(data, dict):
-            last_time = data.get('last_message_time', '')
-            if last_time:
-                try:
-                    msg_date = datetime.fromisoformat(last_time).date()
-                    if msg_date == today:
-                        active_today += 1
-                except:
-                    pass
     
     analytics_text = f"""
 ╔════════════════════════════════╗
@@ -312,10 +267,6 @@ async def analytics_menu(update: Update, context):
 ║  👥 Total Users: {total_users}
 ║  💬 Total Msgs: {total_messages}
 ║  📈 Avg Msg/User: {avg_msgs}
-║  🟢 Active Today: {active_today}
-║  ─────────────────────────────  ║
-║  🎯 **GROWTH RATE**              ║
-║  📈 7-Day Growth: +{active_today}
 ║  ─────────────────────────────  ║
 ║  ⚡ **PERFORMANCE**              ║
 ║  🤖 Bot Uptime: 100%
@@ -325,17 +276,95 @@ async def analytics_menu(update: Update, context):
 """
     
     keyboard = [
-        [InlineKeyboardButton("📊 EXPORT DATA", callback_data="export")],
         [InlineKeyboardButton("🔙 BACK", callback_data="main_menu")]
     ]
     
     await query.edit_message_text(analytics_text, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
 
+async def exit_menu(update: Update, context):
+    """Exit menu"""
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("👋 **Goodbye!** Send /menu to open again.", parse_mode='Markdown')
+
+async def inbox_menu(update: Update, context):
+    """Show inbox"""
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text(
+        "📨 **INBOX**\n\n"
+        "New messages will appear here automatically.\n"
+        "Reply to any forwarded message to respond!",
+        parse_mode='Markdown',
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 BACK", callback_data="main_menu")]])
+    )
+
 # ============================================
 # 📨 MESSAGE HANDLERS
 # ============================================
-async def handle_owner_media_reply(update: Update, context):
-    """Handle owner's media replies"""
+async def broadcast_command(update: Update, context):
+    """Handle broadcast command"""
+    if update.effective_user.id != YOUR_CHAT_ID:
+        return
+    
+    context.user_data['waiting_for_broadcast'] = True
+    await update.message.reply_text(
+        "📢 **BROADCAST MODE**\n\n"
+        "Send me the message you want to broadcast to ALL users.\n\n"
+        "Send /cancel to abort.",
+        parse_mode='Markdown'
+    )
+
+async def handle_broadcast(update: Update, context):
+    """Send broadcast to all users"""
+    if not context.user_data.get('waiting_for_broadcast'):
+        return
+    
+    message = update.message
+    users_data = get_from_firebase("users")
+    
+    if not users_data:
+        await message.reply_text("❌ No users found")
+        context.user_data.clear()
+        return
+    
+    success = 0
+    failed = 0
+    
+    progress = await message.reply_text(f"📡 Sending broadcast to {len(users_data)} users...")
+    
+    for user_id, data in users_data.items():
+        if isinstance(data, dict):
+            try:
+                chat_id = data['chat_id']
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=f"📢 **ANNOUNCEMENT**\n\n{message.text}",
+                    parse_mode='Markdown'
+                )
+                success += 1
+            except:
+                failed += 1
+    
+    await progress.edit_text(
+        f"✅ **BROADCAST COMPLETE**\n\n"
+        f"✓ Sent: {success}\n"
+        f"✗ Failed: {failed}\n"
+        f"📊 Total: {len(users_data)}"
+    )
+    
+    context.user_data.clear()
+
+async def cancel(update: Update, context):
+    """Cancel current operation"""
+    if update.effective_user.id != YOUR_CHAT_ID:
+        return
+    
+    context.user_data.clear()
+    await update.message.reply_text("❌ **Operation cancelled**", parse_mode='Markdown')
+
+async def handle_owner_reply(update: Update, context):
+    """Handle owner's replies to forwarded messages"""
     message = update.message
     user = update.effective_user
     
@@ -361,41 +390,14 @@ async def handle_owner_media_reply(update: Update, context):
             target_name = user_data.get("name")
             
             try:
-                # Send reply with fancy formatting
-                if message.text:
-                    await context.bot.send_message(
-                        chat_id=target_chat_id,
-                        text=f"✨ **Reply from owner:**\n\n{message.text}",
-                        parse_mode='Markdown'
-                    )
-                elif message.photo:
-                    await context.bot.send_photo(
-                        chat_id=target_chat_id,
-                        photo=message.photo[-1].file_id,
-                        caption=f"✨ **Reply from owner:**\n\n{message.caption or ''}",
-                        parse_mode='Markdown'
-                    )
-                elif message.video:
-                    await context.bot.send_video(
-                        chat_id=target_chat_id,
-                        video=message.video.file_id,
-                        caption=f"✨ **Reply from owner:**\n\n{message.caption or ''}",
-                        parse_mode='Markdown'
-                    )
-                elif message.sticker:
-                    await context.bot.send_sticker(
-                        chat_id=target_chat_id,
-                        sticker=message.sticker.file_id
-                    )
-                elif message.animation:
-                    await context.bot.send_animation(
-                        chat_id=target_chat_id,
-                        animation=message.animation.file_id,
-                        caption=f"✨ **Reply from owner:**\n\n{message.caption or ''}",
-                        parse_mode='Markdown'
-                    )
+                await context.bot.send_message(
+                    chat_id=target_chat_id,
+                    text=f"✨ **Reply from owner:**\n\n{message.text}",
+                    parse_mode='Markdown'
+                )
                 
                 await message.reply_text(f"✅ **Reply sent to {target_name}!**", parse_mode='Markdown')
+                logger.info(f"Reply sent to {target_name}")
                 return
                 
             except Exception as e:
@@ -406,56 +408,30 @@ async def handle_message(update: Update, context):
     message = update.message
     user = update.effective_user
     
-    # Quick reply mode
-    if user.id == YOUR_CHAT_ID and context.user_data.get('quick_reply_mode'):
-        # Check if message is a number (user ID)
-        if message.text and message.text.isdigit():
-            user_id = message.text
-            user_data = get_from_firebase(f"users/{user_id}")
-            if user_data:
-                context.user_data['reply_to_user'] = user_id
-                await message.reply_text(
-                    f"✏️ **Replying to {user_data['name']}**\n\nSend your reply message:",
-                    parse_mode='Markdown'
-                )
-                return
-        
-        # Check if waiting for reply message
-        if 'reply_to_user' in context.user_data:
-            user_id = context.user_data['reply_to_user']
-            user_data = get_from_firebase(f"users/{user_id}")
-            if user_data:
-                try:
-                    await context.bot.send_message(
-                        chat_id=user_data['chat_id'],
-                        text=f"✨ **Reply from owner:**\n\n{message.text}",
-                        parse_mode='Markdown'
-                    )
-                    await message.reply_text(f"✅ **Reply sent to {user_data['name']}!**", parse_mode='Markdown')
-                    del context.user_data['reply_to_user']
-                    context.user_data['quick_reply_mode'] = False
-                except Exception as e:
-                    await message.reply_text(f"❌ Error: {e}")
-            return
+    # Check for broadcast mode
+    if user.id == YOUR_CHAT_ID and context.user_data.get('waiting_for_broadcast'):
+        await handle_broadcast(update, context)
+        return
     
-    # Owner replies to forwarded messages
+    # Owner replies
     if user.id == YOUR_CHAT_ID:
         if message.reply_to_message:
-            await handle_owner_media_reply(update, context)
+            await handle_owner_reply(update, context)
             return
         
         if not message.text or not message.text.startswith('/'):
-            print(f"👤 Owner sent (ignored): {message.text if message.text else 'Media'}")
+            logger.info(f"Owner sent (ignored): {message.text}")
         return
     
     # User messages
-    print(f"\n📥 [USER] {user.first_name}: {message.text if message.text else 'Media'}")
+    logger.info(f"📥 User {user.first_name}: {message.text if message.text else 'Media'}")
     
+    # Prepare user data
     user_data = {
         "name": user.first_name,
         "username": user.username,
         "chat_id": message.chat.id,
-        "last_message": message.text or message.caption or "Media",
+        "last_message": message.text or "Media message",
         "last_message_time": datetime.now().isoformat(),
         "total_messages": 1
     }
@@ -467,6 +443,14 @@ async def handle_message(update: Update, context):
     update_firebase(f"users/{user.id}", user_data)
     user_sessions[str(user.id)] = user_data
     
+    # Save message
+    msg_data = {
+        "text": message.text or "Media message",
+        "timestamp": datetime.now().isoformat(),
+        "message_id": message.message_id
+    }
+    save_to_firebase(f"messages/{user.id}", msg_data)
+    
     # Forward to owner
     forwarded_msg = await context.bot.forward_message(
         chat_id=YOUR_CHAT_ID,
@@ -476,31 +460,30 @@ async def handle_message(update: Update, context):
     
     forwarded_mapping[forwarded_msg.message_id] = str(user.id)
     
-    # Send modern notification
-    keyboard = [[InlineKeyboardButton("💬 REPLY NOW", callback_data=f"reply_{user.id}")]]
-    
+    # Send notification
     notification = f"""
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ✨ **NEW MESSAGE** ✨
-
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 👤 **From:** {user.first_name} (@{user.username or 'no username'})
-🆔 **ID:** `{user.id}`
+🆔 **User ID:** `{user.id}`
 💬 **Message:** {message.text or 'Media message'}
 ⏰ **Time:** {datetime.now().strftime('%I:%M %p')}
-
-💡 **Tap REPLY NOW to answer!**
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+✅ **REPLY to this message to answer!**
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """
     
     await context.bot.send_message(
         chat_id=YOUR_CHAT_ID,
         text=notification,
-        parse_mode='Markdown',
-        reply_markup=InlineKeyboardMarkup(keyboard)
+        parse_mode='Markdown'
     )
     
     await message.reply_text("✅ **Message sent!** Owner will reply soon.", parse_mode='Markdown')
 
 # ========================================
-# 🚀 START BOT
+# 🚀 START COMMAND
 # ========================================
 async def start_command(update: Update, context):
     user = update.effective_user
@@ -508,26 +491,54 @@ async def start_command(update: Update, context):
         await main_menu(update, context)
     else:
         await update.message.reply_text(
-            "🌟 **WELCOME!** 🌟\n\nSend me a message and the owner will reply soon!\n\n✅ Your message has been delivered!",
+            "🌟 **WELCOME!** 🌟\n\n"
+            "Send me a message and the owner will reply soon!\n\n"
+            "✅ Your message has been delivered!",
             parse_mode='Markdown'
         )
 
-if __name__ == "__main__":
+async def users_command(update: Update, context):
+    """Users command"""
+    if update.effective_user.id != YOUR_CHAT_ID:
+        return
+    
+    users_data = get_from_firebase("users")
+    if not users_data:
+        await update.message.reply_text("📭 No users yet")
+        return
+    
+    text = "👥 **USERS:**\n\n"
+    for user_id, data in users_data.items():
+        if isinstance(data, dict):
+            text += f"• {data.get('name')} (@{data.get('username', 'no username')})\n"
+            text += f"  ID: `{user_id}` - {data.get('total_messages', 0)} msgs\n\n"
+    
+    await update.message.reply_text(text[:4000], parse_mode='Markdown')
+
+# ========================================
+# 🚀 MAIN FUNCTION
+# ========================================
+def main():
+    """Start the bot"""
+    # Create application
     app = Application.builder().token(BOT_TOKEN).build()
     
     # Commands
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("menu", main_menu))
-    app.add_handler(CommandHandler("cancel", lambda u,c: c.user_data.clear()))
+    app.add_handler(CommandHandler("users", users_command))
+    app.add_handler(CommandHandler("broadcast", broadcast_command))
+    app.add_handler(CommandHandler("cancel", cancel))
     
     # Callbacks
     app.add_handler(CallbackQueryHandler(main_menu, pattern="^main_menu$"))
     app.add_handler(CallbackQueryHandler(dashboard_menu, pattern="^dashboard$"))
     app.add_handler(CallbackQueryHandler(users_menu, pattern="^users_list$"))
     app.add_handler(CallbackQueryHandler(user_details_menu, pattern="^user_"))
-    app.add_handler(CallbackQueryHandler(quick_reply_menu, pattern="^quick_reply$"))
     app.add_handler(CallbackQueryHandler(broadcast_menu, pattern="^broadcast_menu$"))
     app.add_handler(CallbackQueryHandler(analytics_menu, pattern="^analytics$"))
+    app.add_handler(CallbackQueryHandler(inbox_menu, pattern="^inbox$"))
+    app.add_handler(CallbackQueryHandler(exit_menu, pattern="^exit$"))
     
     # Message handler
     app.add_handler(MessageHandler(
@@ -536,19 +547,17 @@ if __name__ == "__main__":
         handle_message
     ))
     
+    # Start bot
     print("=" * 60)
-    print("🌟 MODERN BOT - BUTTON INTERFACE")
+    print("🌟 RENZ SURVEY BOT - RUNNING 24/7")
     print("=" * 60)
-    print("✅ Bot is LIVE with modern UI!")
-    print("\n🎨 **FEATURES:**")
-    print("   • Interactive button menus")
-    print("   • Dashboard with stats")
-    print("   • User directory with profiles")
-    print("   • Quick reply system")
-    print("   • Broadcast center")
-    print("   • Analytics dashboard")
-    print("\n📱 **START:** Send /start or /menu")
-    print("💡 **REPLY:** Just reply to any forwarded message!")
+    print(f"✅ Bot is LIVE!")
+    print(f"✅ Your Chat ID: {YOUR_CHAT_ID}")
+    print(f"✅ Firebase: Connected")
+    print(f"✅ Modern UI: Active")
     print("=" * 60)
     
-    app.run_polling()
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
+
+if __name__ == "__main__":
+    main()
